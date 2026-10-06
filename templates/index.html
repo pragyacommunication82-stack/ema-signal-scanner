@@ -1,1 +1,1139 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111827"><title>EMA Signal Scanner</title><style>body{margin:0;font-family:Arial;background:#f4f6f8;color:#111827}header{background:#111827;color:#fff;padding:18px}h1{margin:0 0 5px;font-size:22px}.sub{font-size:12px;opacity:.75}.wrap{max-width:900px;margin:auto;padding:14px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}button{background:#111827;color:#fff;border:0;border-radius:10px;padding:10px 14px;font-weight:bold}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.card{background:#fff;border-radius:16px;padding:15px;box-shadow:0 3px 14px #0001}.asset{font-size:18px;font-weight:800}.signal{margin:14px 0 10px;padding:10px;border-radius:10px;text-align:center;font-weight:900}.long{background:#dcfce7;color:#166534}.short{background:#fee2e2;color:#991b1b}.wait{background:#eef2f7;color:#475569}.error{background:#fff7ed;color:#9a3412}.unavailable{background:#fff7ed;color:#9a3412}.row{display:flex;justify-content:space-between;border-top:1px solid #edf0f3;padding:8px 0;font-size:13px}.muted{color:#6b7280}.rules{background:#fff;border-radius:16px;padding:15px;margin-top:14px;font-size:13px;line-height:1.5}</style></head><body><header><h1>⚡ EMA Signal Scanner</h1><div class="sub">5M EMA 7 / 17 / 50 / 200 • 15M Trend • RR 1:2 • SIGNAL ONLY</div></header><div class="wrap"><div class="top"><span id="status" class="muted">Loading...</span><button onclick="scan()">Refresh</button></div><div id="grid" class="grid"></div><div class="rules"><b>Assets:</b> BTC • ETH • SOL • GOLD<br><b>SL:</b> previous two candles • <b>Target:</b> 1:2 • No automatic orders.<br><span class="muted">Gold symbol is auto-discovered from Delta's live product list; it is not hard-coded.</span></div></div><script>function n(x){return x==null?'—':Number(x).toLocaleString(undefined,{maximumFractionDigits:4})}function card(k,d){let cls=d.signal==='LONG'?'long':d.signal==='SHORT'?'short':d.signal==='ERROR'||d.signal==='UNAVAILABLE'?'error':'wait';return `<div class="card"><div class="asset">${k} <span class="muted">${d.symbol||''}</span></div><div class="signal ${cls}">${d.signal}</div><div class="row"><span class="muted">15M Trend</span><b>${d.trend||'—'}</b></div>${d.signal==='LONG'||d.signal==='SHORT'?`<div class="row"><span class="muted">Entry</span><b>${n(d.entry)}</b></div><div class="row"><span class="muted">SL</span><b>${n(d.sl)}</b></div><div class="row"><span class="muted">Target 1:2</span><b>${n(d.target)}</b></div>`:''}<div class="row"><span class="muted">Status</span><span>${d.reason||'Confirmed setup'}</span></div></div>`}async function scan(){document.getElementById('status').textContent='Updating...';try{let r=await fetch('/api/scan?x='+Date.now());let j=await r.json();document.getElementById('grid').innerHTML=Object.entries(j.assets).map(x=>card(x[0],x[1])).join('');document.getElementById('status').textContent='Updated '+new Date(j.updated*1000).toLocaleTimeString()}catch(e){document.getElementById('status').textContent='Connection error'}}scan();setInterval(scan,30000);</script></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>EMA Signal Terminal</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background:
+                radial-gradient(
+                    circle at top,
+                    #101820 0%,
+                    #050608 45%,
+                    #000000 100%
+                );
+            color: #e8edf2;
+            font-family:
+                "Courier New",
+                Consolas,
+                monospace;
+            min-height: 100vh;
+        }
+
+        /* ---------------------------------------------
+           HEADER
+        --------------------------------------------- */
+
+        .header {
+            border-bottom: 1px solid #20262d;
+            background: rgba(3, 5, 7, 0.96);
+            padding: 18px 22px;
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            backdrop-filter: blur(12px);
+        }
+
+        .header-row {
+            max-width: 1500px;
+            margin: auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .terminal-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #00ff88;
+            box-shadow:
+                0 0 8px #00ff88,
+                0 0 18px rgba(0,255,136,0.5);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.45;
+            }
+        }
+
+        .brand-title {
+            font-size: 20px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            color: #ffffff;
+        }
+
+        .live {
+            color: #00ff88;
+            font-size: 11px;
+            letter-spacing: 2px;
+            margin-top: 4px;
+        }
+
+        .header-info {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .top-tag {
+            border: 1px solid #252d35;
+            background: #090c0f;
+            color: #9ba8b5;
+            padding: 7px 10px;
+            border-radius: 5px;
+            font-size: 10px;
+            letter-spacing: 1px;
+        }
+
+        .top-tag strong {
+            color: #f0f4f7;
+        }
+
+        /* ---------------------------------------------
+           MAIN
+        --------------------------------------------- */
+
+        .container {
+            width: min(1500px, 96%);
+            margin: 0 auto;
+            padding: 20px 0 40px;
+        }
+
+        .system-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 15px;
+            margin-bottom: 18px;
+            padding: 10px 14px;
+            border-left: 3px solid #00ff88;
+            background: rgba(7, 10, 13, 0.85);
+            color: #87939e;
+            font-size: 11px;
+        }
+
+        .system-bar span {
+            color: #00ff88;
+        }
+
+        /* ---------------------------------------------
+           GRID
+        --------------------------------------------- */
+
+        .assets-grid {
+            display: grid;
+            grid-template-columns:
+                repeat(auto-fit, minmax(290px, 1fr));
+            gap: 16px;
+        }
+
+        /* ---------------------------------------------
+           CARD
+        --------------------------------------------- */
+
+        .card {
+            position: relative;
+            background:
+                linear-gradient(
+                    145deg,
+                    rgba(15, 19, 23, 0.98),
+                    rgba(5, 7, 9, 0.98)
+                );
+            border: 1px solid #202830;
+            border-radius: 9px;
+            overflow: hidden;
+            box-shadow:
+                0 12px 30px rgba(0,0,0,0.35);
+        }
+
+        .card::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #29323a;
+        }
+
+        .card.long::before {
+            background: #00ff88;
+            box-shadow: 0 0 12px #00ff88;
+        }
+
+        .card.short::before {
+            background: #ff3b4f;
+            box-shadow: 0 0 12px #ff3b4f;
+        }
+
+        .card.wait::before {
+            background: #f5c542;
+        }
+
+        .card-head {
+            padding: 15px 15px 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 1px solid #171d22;
+        }
+
+        .asset-name {
+            font-size: 18px;
+            font-weight: bold;
+            color: #ffffff;
+        }
+
+        .symbol {
+            margin-top: 4px;
+            color: #697782;
+            font-size: 10px;
+            letter-spacing: 1px;
+        }
+
+        .signal {
+            min-width: 72px;
+            text-align: center;
+            padding: 7px 9px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 12px;
+            letter-spacing: 1px;
+        }
+
+        .signal.long {
+            color: #00ff88;
+            background: rgba(0,255,136,0.08);
+            border: 1px solid rgba(0,255,136,0.35);
+        }
+
+        .signal.short {
+            color: #ff4b5f;
+            background: rgba(255,59,79,0.08);
+            border: 1px solid rgba(255,59,79,0.35);
+        }
+
+        .signal.wait {
+            color: #f5c542;
+            background: rgba(245,197,66,0.08);
+            border: 1px solid rgba(245,197,66,0.35);
+        }
+
+        .signal.error,
+        .signal.unavailable {
+            color: #ff8a8a;
+            background: rgba(255,80,80,0.08);
+            border: 1px solid rgba(255,80,80,0.3);
+        }
+
+        /* ---------------------------------------------
+           PRICE
+        --------------------------------------------- */
+
+        .price-section {
+            padding: 14px 15px;
+            background: rgba(0,0,0,0.22);
+        }
+
+        .price-label {
+            color: #697782;
+            font-size: 9px;
+            letter-spacing: 2px;
+        }
+
+        .price {
+            margin-top: 4px;
+            font-size: 24px;
+            font-weight: bold;
+            color: #f4f7f9;
+            transition: color 0.25s;
+        }
+
+        .price.up {
+            color: #00ff88;
+        }
+
+        .price.down {
+            color: #ff4b5f;
+        }
+
+        .price-arrow {
+            font-size: 13px;
+            margin-left: 5px;
+        }
+
+        /* ---------------------------------------------
+           MTF CHECKS
+        --------------------------------------------- */
+
+        .section-title {
+            color: #5e6a74;
+            font-size: 9px;
+            letter-spacing: 2px;
+            padding: 12px 15px 8px;
+        }
+
+        .checks {
+            display: grid;
+            grid-template-columns:
+                repeat(4, 1fr);
+            gap: 6px;
+            padding: 0 15px 13px;
+        }
+
+        .check {
+            background: #080b0e;
+            border: 1px solid #1c2329;
+            border-radius: 5px;
+            text-align: center;
+            padding: 8px 3px;
+        }
+
+        .check-name {
+            display: block;
+            color: #626e78;
+            font-size: 9px;
+            margin-bottom: 5px;
+        }
+
+        .check-value {
+            font-size: 10px;
+            font-weight: bold;
+        }
+
+        .pass {
+            color: #00ff88;
+        }
+
+        .fail {
+            color: #ff4b5f;
+        }
+
+        .wait-color {
+            color: #f5c542;
+        }
+
+        .long-color {
+            color: #00ff88;
+        }
+
+        .short-color {
+            color: #ff4b5f;
+        }
+
+        /* ---------------------------------------------
+           TRADE BOX
+        --------------------------------------------- */
+
+        .trade-box {
+            margin: 0 15px 14px;
+            padding: 12px;
+            border: 1px solid #202930;
+            border-radius: 6px;
+            background: #060809;
+        }
+
+        .trade-grid {
+            display: grid;
+            grid-template-columns:
+                repeat(3, 1fr);
+            gap: 8px;
+        }
+
+        .trade-item {
+            min-width: 0;
+        }
+
+        .trade-label {
+            color: #5f6b75;
+            font-size: 8px;
+            letter-spacing: 1px;
+        }
+
+        .trade-value {
+            margin-top: 4px;
+            color: #ffffff;
+            font-size: 12px;
+            font-weight: bold;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .trade-value.entry {
+            color: #ffffff;
+        }
+
+        .trade-value.sl {
+            color: #ff4b5f;
+        }
+
+        .trade-value.target {
+            color: #00ff88;
+        }
+
+        /* ---------------------------------------------
+           REASON
+        --------------------------------------------- */
+
+        .reason {
+            min-height: 42px;
+            margin: 0 15px 15px;
+            padding: 9px 10px;
+            border-left: 2px solid #29323a;
+            background: #07090b;
+            color: #7f8b95;
+            font-size: 9px;
+            line-height: 1.5;
+        }
+
+        .reason strong {
+            color: #aeb8c0;
+        }
+
+        /* ---------------------------------------------
+           FOOTER
+        --------------------------------------------- */
+
+        .footer {
+            margin-top: 20px;
+            padding: 12px 15px;
+            border-top: 1px solid #171d22;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            color: #4f5b64;
+            font-size: 9px;
+            letter-spacing: 1px;
+        }
+
+        .footer .green {
+            color: #00ff88;
+        }
+
+        /* ---------------------------------------------
+           RESPONSIVE
+        --------------------------------------------- */
+
+        @media (max-width: 700px) {
+
+            .header {
+                padding: 14px;
+            }
+
+            .header-row {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .header-info {
+                justify-content: flex-start;
+            }
+
+            .container {
+                width: 94%;
+            }
+
+            .assets-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .system-bar {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+
+    </style>
+</head>
+
+<body>
+
+    <!-- HEADER -->
+
+    <header class="header">
+
+        <div class="header-row">
+
+            <div class="brand">
+
+                <div class="terminal-dot"></div>
+
+                <div>
+                    <div class="brand-title">
+                        EMA SIGNAL TERMINAL
+                    </div>
+
+                    <div class="live">
+                        ● LIVE SIGNAL SCANNER
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="header-info">
+
+                <div class="top-tag">
+                    MODE:
+                    <strong>SIGNAL ONLY</strong>
+                </div>
+
+                <div class="top-tag">
+                    RR:
+                    <strong>1:2</strong>
+                </div>
+
+                <div class="top-tag">
+                    AUTO ORDER:
+                    <strong>OFF</strong>
+                </div>
+
+                <div class="top-tag">
+                    REFRESH:
+                    <strong>10 SEC</strong>
+                </div>
+
+            </div>
+
+        </div>
+
+    </header>
+
+
+    <!-- MAIN -->
+
+    <main class="container">
+
+        <div class="system-bar">
+
+            <div>
+                SYSTEM:
+                <span id="systemStatus">
+                    INITIALIZING...
+                </span>
+            </div>
+
+            <div>
+                LAST UPDATE:
+                <span id="lastUpdate">
+                    --
+                </span>
+            </div>
+
+            <div>
+                BODY TOUCH ONLY |
+                WICK IGNORED
+            </div>
+
+        </div>
+
+
+        <section
+            id="assetsGrid"
+            class="assets-grid"
+        >
+        </section>
+
+
+        <footer class="footer">
+
+            <div>
+                EMA 7 / 17 / 50 / 200
+            </div>
+
+            <div>
+                SL =
+                <span class="green">
+                    PREVIOUS 2 CANDLES
+                </span>
+            </div>
+
+            <div>
+                TARGET =
+                <span class="green">
+                    1:2 RR
+                </span>
+            </div>
+
+            <div>
+                NO AUTO TRADING
+            </div>
+
+        </footer>
+
+    </main>
+
+
+    <script>
+
+        const grid =
+            document.getElementById(
+                "assetsGrid"
+            );
+
+        const systemStatus =
+            document.getElementById(
+                "systemStatus"
+            );
+
+        const lastUpdate =
+            document.getElementById(
+                "lastUpdate"
+            );
+
+        const previousPrices = {};
+
+
+        // ------------------------------------------------
+        // NUMBER FORMAT
+        // ------------------------------------------------
+
+        function formatPrice(value) {
+
+            if (
+                value === null ||
+                value === undefined ||
+                isNaN(value)
+            ) {
+                return "--";
+            }
+
+            const number =
+                Number(value);
+
+            let decimals = 2;
+
+            if (
+                Math.abs(number) < 1
+            ) {
+                decimals = 6;
+            }
+            else if (
+                Math.abs(number) < 10
+            ) {
+                decimals = 4;
+            }
+            else if (
+                Math.abs(number) < 1000
+            ) {
+                decimals = 3;
+            }
+
+            return number.toLocaleString(
+                "en-IN",
+                {
+                    minimumFractionDigits:
+                        decimals,
+                    maximumFractionDigits:
+                        decimals
+                }
+            );
+        }
+
+
+        // ------------------------------------------------
+        // SIGNAL CLASS
+        // ------------------------------------------------
+
+        function signalClass(signal) {
+
+            if (signal === "LONG")
+                return "long";
+
+            if (signal === "SHORT")
+                return "short";
+
+            if (signal === "WAIT")
+                return "wait";
+
+            if (signal === "UNAVAILABLE")
+                return "unavailable";
+
+            return "error";
+        }
+
+
+        // ------------------------------------------------
+        // CHECK CLASS
+        // ------------------------------------------------
+
+        function checkClass(value) {
+
+            if (value === "PASS")
+                return "pass";
+
+            if (value === "LONG")
+                return "long-color";
+
+            if (value === "SHORT")
+                return "short-color";
+
+            if (value === "WAIT")
+                return "wait-color";
+
+            return "fail";
+        }
+
+
+        // ------------------------------------------------
+        // PRICE MOVEMENT
+        // ------------------------------------------------
+
+        function priceMovement(
+            asset,
+            price
+        ) {
+
+            if (
+                price === null ||
+                price === undefined
+            ) {
+                return {
+                    className: "",
+                    arrow: ""
+                };
+            }
+
+            const old =
+                previousPrices[asset];
+
+            previousPrices[asset] =
+                Number(price);
+
+            if (
+                old === undefined
+            ) {
+                return {
+                    className: "",
+                    arrow: ""
+                };
+            }
+
+            if (
+                Number(price) > old
+            ) {
+                return {
+                    className: "up",
+                    arrow: "▲"
+                };
+            }
+
+            if (
+                Number(price) < old
+            ) {
+                return {
+                    className: "down",
+                    arrow: "▼"
+                };
+            }
+
+            return {
+                className: "",
+                arrow: ""
+            };
+        }
+
+
+        // ------------------------------------------------
+        // CARD
+        // ------------------------------------------------
+
+        function createCard(data) {
+
+            const signal =
+                data.signal || "WAIT";
+
+            const signalCls =
+                signalClass(signal);
+
+            const movement =
+                priceMovement(
+                    data.asset,
+                    data.price
+                );
+
+            const checks =
+                data.checks || {};
+
+            let tradeBox = "";
+
+            if (
+                signal === "LONG" ||
+                signal === "SHORT"
+            ) {
+
+                tradeBox = `
+
+                    <div class="trade-box">
+
+                        <div class="trade-grid">
+
+                            <div class="trade-item">
+
+                                <div class="trade-label">
+                                    ENTRY
+                                </div>
+
+                                <div class="trade-value entry">
+                                    ${formatPrice(
+                                        data.entry
+                                    )}
+                                </div>
+
+                            </div>
+
+
+                            <div class="trade-item">
+
+                                <div class="trade-label">
+                                    STOP LOSS
+                                </div>
+
+                                <div class="trade-value sl">
+                                    ${formatPrice(
+                                        data.sl
+                                    )}
+                                </div>
+
+                            </div>
+
+
+                            <div class="trade-item">
+
+                                <div class="trade-label">
+                                    TARGET
+                                </div>
+
+                                <div class="trade-value target">
+                                    ${formatPrice(
+                                        data.target
+                                    )}
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                `;
+            }
+
+
+            return `
+
+                <article
+                    class="card ${signalCls}"
+                >
+
+                    <div class="card-head">
+
+                        <div>
+
+                            <div class="asset-name">
+                                ${data.asset}
+                            </div>
+
+                            <div class="symbol">
+                                ${data.symbol || "--"}
+                            </div>
+
+                        </div>
+
+
+                        <div
+                            class="signal ${signalCls}"
+                        >
+                            ${signal}
+                        </div>
+
+                    </div>
+
+
+                    <div class="price-section">
+
+                        <div class="price-label">
+                            LIVE PRICE
+                        </div>
+
+                        <div
+                            class="price ${movement.className}"
+                        >
+                            ${formatPrice(
+                                data.price
+                            )}
+
+                            <span class="price-arrow">
+                                ${movement.arrow}
+                            </span>
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="section-title">
+                        MULTI-TIMEFRAME FILTER
+                    </div>
+
+
+                    <div class="checks">
+
+                        <div class="check">
+
+                            <span class="check-name">
+                                4H
+                            </span>
+
+                            <span
+                                class="check-value
+                                ${checkClass(
+                                    checks["4H"]
+                                )}"
+                            >
+                                ${checks["4H"] || "--"}
+                            </span>
+
+                        </div>
+
+
+                        <div class="check">
+
+                            <span class="check-name">
+                                1H
+                            </span>
+
+                            <span
+                                class="check-value
+                                ${checkClass(
+                                    checks["1H"]
+                                )}"
+                            >
+                                ${checks["1H"] || "--"}
+                            </span>
+
+                        </div>
+
+
+                        <div class="check">
+
+                            <span class="check-name">
+                                15M
+                            </span>
+
+                            <span
+                                class="check-value
+                                ${checkClass(
+                                    checks["15M"]
+                                )}"
+                            >
+                                ${checks["15M"] || "--"}
+                            </span>
+
+                        </div>
+
+
+                        <div class="check">
+
+                            <span class="check-name">
+                                5M
+                            </span>
+
+                            <span
+                                class="check-value
+                                ${checkClass(
+                                    checks["5M"]
+                                )}"
+                            >
+                                ${checks["5M"] || "--"}
+                            </span>
+
+                        </div>
+
+                    </div>
+
+
+                    ${tradeBox}
+
+
+                    <div class="reason">
+
+                        <strong>STATUS:</strong>
+
+                        ${
+                            data.reason
+                            || "Scanning..."
+                        }
+
+                    </div>
+
+                </article>
+
+            `;
+        }
+
+
+        // ------------------------------------------------
+        // LOAD DATA
+        // ------------------------------------------------
+
+        async function loadScanner() {
+
+            try {
+
+                systemStatus.textContent =
+                    "SCANNING";
+
+                const response =
+                    await fetch(
+                        "/api/scan?t=" +
+                        Date.now(),
+                        {
+                            cache: "no-store"
+                        }
+                    );
+
+                if (!response.ok) {
+                    throw new Error(
+                        "Server error " +
+                        response.status
+                    );
+                }
+
+                const data =
+                    await response.json();
+
+                if (
+                    !data.assets ||
+                    !Array.isArray(
+                        data.assets
+                    )
+                ) {
+                    throw new Error(
+                        "Invalid scanner response"
+                    );
+                }
+
+                grid.innerHTML =
+                    data.assets
+                    .map(createCard)
+                    .join("");
+
+                systemStatus.textContent =
+                    "ONLINE";
+
+                const now =
+                    new Date();
+
+                lastUpdate.textContent =
+                    now.toLocaleTimeString(
+                        "en-IN",
+                        {
+                            hour12: false
+                        }
+                    );
+
+            }
+            catch (error) {
+
+                console.error(
+                    error
+                );
+
+                systemStatus.textContent =
+                    "CONNECTION ERROR";
+
+                lastUpdate.textContent =
+                    "RETRYING...";
+
+                if (
+                    !grid.children.length
+                ) {
+
+                    grid.innerHTML = `
+
+                        <div
+                            class="card error"
+                            style="
+                                grid-column:
+                                1 / -1;
+                                padding: 25px;
+                            "
+                        >
+
+                            <div
+                                class="asset-name"
+                            >
+                                SCANNER ERROR
+                            </div>
+
+                            <div
+                                class="reason"
+                                style="
+                                    margin: 15px 0 0;
+                                "
+                            >
+                                Unable to connect
+                                to scanner backend.
+                                Retrying automatically...
+                            </div>
+
+                        </div>
+
+                    `;
+                }
+
+            }
+
+        }
+
+
+        // ------------------------------------------------
+        // INITIAL SCAN
+        // ------------------------------------------------
+
+        loadScanner();
+
+
+        // ------------------------------------------------
+        // AUTO REFRESH
+        // ------------------------------------------------
+
+        setInterval(
+            loadScanner,
+            10000
+        );
+
+    </script>
+
+</body>
+</html>
