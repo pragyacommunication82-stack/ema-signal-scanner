@@ -1,5 +1,4 @@
 from flask import Flask, jsonify, render_template
-import os
 import time
 import requests
 import pandas as pd
@@ -12,18 +11,17 @@ PRODUCTS_URL = "https://api.india.delta.exchange/v2/products"
 SYMBOLS = {
     "BTC": "BTCUSD",
     "ETH": "ETHUSD",
-    "SOL": "SOLUSD"
+    "SOL": "SOLUSD",
 }
 
 RR = 2.0
 
 
-# =========================================================
-# GET CANDLES
-# =========================================================
+# ---------------------------------------------------------
+# COMMON HELPERS
+# ---------------------------------------------------------
 
 def candles(symbol, resolution, minutes):
-
     now = int(time.time())
 
     r = requests.get(
@@ -32,16 +30,15 @@ def candles(symbol, resolution, minutes):
             "resolution": resolution,
             "symbol": symbol,
             "start": now - minutes * 60,
-            "end": now
+            "end": now,
         },
-        timeout=10
+        timeout=10,
     )
 
     r.raise_for_status()
 
-    df = pd.DataFrame(
-        r.json().get("result", [])
-    )
+    data = r.json().get("result", [])
+    df = pd.DataFrame(data)
 
     if df.empty:
         return df
@@ -52,54 +49,37 @@ def candles(symbol, resolution, minutes):
         utc=True
     )
 
-    for col in [
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume"
-    ]:
+    for col in ["open", "high", "low", "close", "volume"]:
         if col in df.columns:
             df[col] = pd.to_numeric(
                 df[col],
                 errors="coerce"
             )
 
-    return (
-        df
-        .sort_values("time")
+    df = (
+        df.sort_values("time")
         .drop_duplicates("time")
         .set_index("time")
     )
 
+    return df
 
-# =========================================================
-# ONLY CLOSED CANDLES
-# =========================================================
 
 def closed(df, minutes):
-
     if df.empty:
         return df
 
     now = pd.Timestamp.now(tz="UTC")
 
     return df[
-        df.index + pd.Timedelta(minutes=minutes)
-        <= now
+        df.index + pd.Timedelta(minutes=minutes) <= now
     ]
 
 
-# =========================================================
-# EMA
-# =========================================================
-
 def add_emas(df):
-
     df = df.copy()
 
     for period in [7, 17, 50, 200]:
-
         df[f"ema{period}"] = (
             df["close"]
             .ewm(
@@ -112,14 +92,7 @@ def add_emas(df):
     return df
 
 
-# =========================================================
-# CANDLE BODY
-#
-# WICK IS NOT COUNTED
-# =========================================================
-
 def body_range(candle):
-
     body_low = min(
         float(candle["open"]),
         float(candle["close"])
@@ -133,152 +106,236 @@ def body_range(candle):
     return body_low, body_high
 
 
-# =========================================================
-# BODY TOUCH EMA
-# =========================================================
-
 def body_touches_ema(candle, ema):
-
     body_low, body_high = body_range(candle)
 
     return (
-        body_low <= float(ema)
+        body_low
+        <= float(ema)
         <= body_high
     )
 
 
-# =========================================================
-# 4H CONDITION
-#
-# BODY TOUCH EMA 7
-# =========================================================
+# ---------------------------------------------------------
+# GOLD / SILVER AUTO DISCOVERY
+# ---------------------------------------------------------
+
+def get_products():
+    try:
+        r = requests.get(
+            PRODUCTS_URL,
+            timeout=10
+        )
+
+        r.raise_for_status()
+
+        result = r.json().get("result", [])
+
+        return result
+
+    except Exception:
+        return []
+
+
+def find_metal_symbol(metal):
+    products = get_products()
+
+    candidates = []
+
+    for product in products:
+
+        symbol = str(
+            product.get("symbol", "")
+        ).upper()
+
+        description = str(
+            product.get("description", "")
+        ).upper()
+
+        contract_type = str(
+            product.get("contract_type", "")
+        ).upper()
+
+        text = (
+            symbol
+            + " "
+            + description
+        )
+
+        if metal == "GOLD":
+            match = (
+                "XAU" in text
+                or "GOLD" in text
+            )
+        else:
+            match = (
+                "XAG" in text
+                or "SILVER" in text
+            )
+
+        if not match:
+            continue
+
+        # Prefer perpetual products.
+        score = 0
+
+        if "PERPETUAL" in contract_type:
+            score += 100
+
+        if "PERP" in symbol:
+            score += 50
+
+        if "USD" in symbol:
+            score += 10
+
+        candidates.append(
+            (score, symbol)
+        )
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda x: x[0],
+        reverse=True
+    )
+
+    return candidates[0][1]
+
+
+def build_symbols():
+    symbols = dict(SYMBOLS)
+
+    gold = find_metal_symbol("GOLD")
+    silver = find_metal_symbol("SILVER")
+
+    if gold:
+        symbols["GOLD"] = gold
+
+    if silver:
+        symbols["SILVER"] = silver
+
+    return symbols
+
+
+# ---------------------------------------------------------
+# HIGHER TIMEFRAME CHECKS
+# ---------------------------------------------------------
 
 def check_4h(symbol):
+    try:
+        df = candles(
+            symbol,
+            "4h",
+            4 * 300
+        )
 
-    df = candles(
-        symbol,
-        "4h",
-        4 * 300
-    )
+        if df.empty:
+            return False
 
-    if df.empty:
+        df = closed(df, 240)
+
+        if len(df) < 210:
+            return False
+
+        df = add_emas(df)
+
+        candle = df.iloc[-1]
+
+        # BODY must touch EMA 7.
+        # Wick touch DOES NOT count.
+        return body_touches_ema(
+            candle,
+            candle["ema7"]
+        )
+
+    except Exception:
         return False
 
-    df = closed(df, 240)
-
-    if len(df) < 210:
-        return False
-
-    df = add_emas(df)
-
-    candle = df.iloc[-1]
-
-    return body_touches_ema(
-        candle,
-        candle["ema7"]
-    )
-
-
-# =========================================================
-# 1H CONDITION
-#
-# BODY TOUCH EMA 7 + EMA 17
-# =========================================================
 
 def check_1h(symbol):
+    try:
+        df = candles(
+            symbol,
+            "1h",
+            60 * 300
+        )
 
-    df = candles(
-        symbol,
-        "1h",
-        60 * 300
-    )
+        if df.empty:
+            return False
 
-    if df.empty:
+        df = closed(df, 60)
+
+        if len(df) < 210:
+            return False
+
+        df = add_emas(df)
+
+        candle = df.iloc[-1]
+
+        # BOTH EMA 7 and EMA 17 compulsory.
+        return (
+            body_touches_ema(
+                candle,
+                candle["ema7"]
+            )
+            and
+            body_touches_ema(
+                candle,
+                candle["ema17"]
+            )
+        )
+
+    except Exception:
         return False
 
-    df = closed(df, 60)
-
-    if len(df) < 210:
-        return False
-
-    df = add_emas(df)
-
-    candle = df.iloc[-1]
-
-    return (
-        body_touches_ema(
-            candle,
-            candle["ema7"]
-        )
-        and
-        body_touches_ema(
-            candle,
-            candle["ema17"]
-        )
-    )
-
-
-# =========================================================
-# 15M CONDITION
-#
-# BODY TOUCH:
-# EMA 7 + EMA 17 + EMA 50
-#
-# ALL THREE COMPULSORY
-# =========================================================
 
 def check_15m(symbol):
+    try:
+        df = candles(
+            symbol,
+            "15m",
+            15 * 300
+        )
 
-    df = candles(
-        symbol,
-        "15m",
-        15 * 300
-    )
+        if df.empty:
+            return False
 
-    if df.empty:
+        df = closed(df, 15)
+
+        if len(df) < 210:
+            return False
+
+        df = add_emas(df)
+
+        candle = df.iloc[-1]
+
+        # ALL THREE compulsory:
+        # EMA 7 + EMA 17 + EMA 50
+        return (
+            body_touches_ema(
+                candle,
+                candle["ema7"]
+            )
+            and
+            body_touches_ema(
+                candle,
+                candle["ema17"]
+            )
+            and
+            body_touches_ema(
+                candle,
+                candle["ema50"]
+            )
+        )
+
+    except Exception:
         return False
 
-    df = closed(df, 15)
 
-    if len(df) < 210:
-        return False
-
-    df = add_emas(df)
-
-    candle = df.iloc[-1]
-
-    return (
-        body_touches_ema(
-            candle,
-            candle["ema7"]
-        )
-        and
-        body_touches_ema(
-            candle,
-            candle["ema17"]
-        )
-        and
-        body_touches_ema(
-            candle,
-            candle["ema50"]
-        )
-    )
-
-
-# =========================================================
-# 5M SETUP
-#
-# LONG:
-# Previous candle body below EMA cluster
-# Current green candle body crosses EMA 7/17/50/200
-#
-# SHORT:
-# Previous candle body above EMA cluster
-# Current red candle body crosses EMA 7/17/50/200
-#
-# SL = PREVIOUS TWO CANDLES
-# TARGET = 1:2
-# =========================================================
+# ---------------------------------------------------------
+# 5 MINUTE ENTRY SETUP
+# ---------------------------------------------------------
 
 def five_minute_setup(df):
 
@@ -329,85 +386,36 @@ def five_minute_setup(df):
         previous
     )
 
-    # =====================================================
+    # -----------------------------------------------------
     # LONG
-    # =====================================================
+    # -----------------------------------------------------
 
     green = (
         current["close"]
-        >
-        current["open"]
+        > current["open"]
     )
 
     previous_body_below = (
         previous_body_high
-        <
-        previous_low_ema
+        < previous_low_ema
     )
 
     current_body_crossed_up = (
         current_body_low
-        <=
-        current_high_ema
+        <= current_high_ema
         and
         current_body_high
-        >
-        current_high_ema
+        > current_high_ema
         and
         current["close"]
-        >
-        current_high_ema
+        > current_high_ema
     )
 
     long_setup = (
         green
-        and
-        previous_body_below
-        and
-        current_body_crossed_up
+        and previous_body_below
+        and current_body_crossed_up
     )
-
-    # =====================================================
-    # SHORT
-    # =====================================================
-
-    red = (
-        current["close"]
-        <
-        current["open"]
-    )
-
-    previous_body_above = (
-        previous_body_low
-        >
-        previous_high_ema
-    )
-
-    current_body_crossed_down = (
-        current_body_high
-        >=
-        current_low_ema
-        and
-        current_body_low
-        <
-        current_low_ema
-        and
-        current["close"]
-        <
-        current_low_ema
-    )
-
-    short_setup = (
-        red
-        and
-        previous_body_above
-        and
-        current_body_crossed_down
-    )
-
-    # =====================================================
-    # LONG SIGNAL
-    # =====================================================
 
     if long_setup:
 
@@ -415,6 +423,7 @@ def five_minute_setup(df):
             current["close"]
         )
 
+        # SL = lowest low of previous 2 candles
         sl = float(
             min(
                 previous["low"],
@@ -428,8 +437,7 @@ def five_minute_setup(df):
 
             target = (
                 entry
-                +
-                RR * risk
+                + RR * risk
             )
 
             return {
@@ -439,13 +447,42 @@ def five_minute_setup(df):
                 "target": target,
                 "rr": "1:2",
                 "time": current.name.isoformat(),
-                "reason":
-                    "5M bullish body cross of EMA 7/17/50/200"
+                "reason": (
+                    "5M bullish body cross "
+                    "of EMA 7/17/50/200"
+                ),
             }
 
-    # =====================================================
-    # SHORT SIGNAL
-    # =====================================================
+    # -----------------------------------------------------
+    # SHORT
+    # -----------------------------------------------------
+
+    red = (
+        current["close"]
+        < current["open"]
+    )
+
+    previous_body_above = (
+        previous_body_low
+        > previous_high_ema
+    )
+
+    current_body_crossed_down = (
+        current_body_high
+        >= current_low_ema
+        and
+        current_body_low
+        < current_low_ema
+        and
+        current["close"]
+        < current_low_ema
+    )
+
+    short_setup = (
+        red
+        and previous_body_above
+        and current_body_crossed_down
+    )
 
     if short_setup:
 
@@ -453,6 +490,7 @@ def five_minute_setup(df):
             current["close"]
         )
 
+        # SL = highest high of previous 2 candles
         sl = float(
             max(
                 previous["high"],
@@ -466,8 +504,7 @@ def five_minute_setup(df):
 
             target = (
                 entry
-                -
-                RR * risk
+                - RR * risk
             )
 
             return {
@@ -477,400 +514,255 @@ def five_minute_setup(df):
                 "target": target,
                 "rr": "1:2",
                 "time": current.name.isoformat(),
-                "reason":
-                    "5M bearish body cross of EMA 7/17/50/200"
+                "reason": (
+                    "5M bearish body cross "
+                    "of EMA 7/17/50/200"
+                ),
             }
 
     return None
 
 
-# =========================================================
-# GOLD AUTO DISCOVERY
-# =========================================================
+# ---------------------------------------------------------
+# COMPLETE SIGNAL
+# ---------------------------------------------------------
 
-def find_gold_symbol():
-
-    try:
-
-        r = requests.get(
-            PRODUCTS_URL,
-            params={
-                "states": "live",
-                "page_size": 100
-            },
-            timeout=10
-        )
-
-        r.raise_for_status()
-
-        products = r.json().get(
-            "result",
-            []
-        )
-
-        candidates = []
-
-        for p in products:
-
-            text = " ".join(
-                str(
-                    p.get(k, "")
-                )
-                for k in [
-                    "symbol",
-                    "description",
-                    "underlying_asset",
-                    "contract_type",
-                    "product_type"
-                ]
-            ).upper()
-
-            if (
-                "XAU" in text
-                or
-                "GOLD" in text
-            ):
-                candidates.append(p)
-
-        # Prefer perpetual XAU
-        for p in candidates:
-
-            symbol = str(
-                p.get("symbol", "")
-            )
-
-            contract_type = str(
-                p.get(
-                    "contract_type",
-                    p.get(
-                        "product_type",
-                        ""
-                    )
-                )
-            ).lower()
-
-            if (
-                "XAU" in symbol.upper()
-                and
-                "perpetual" in contract_type
-            ):
-                return symbol
-
-        # Any XAU symbol
-        for p in candidates:
-
-            symbol = str(
-                p.get("symbol", "")
-            )
-
-            if "XAU" in symbol.upper():
-                return symbol
-
-    except Exception:
-        pass
-
-    return None
-
-
-# =========================================================
-# SILVER AUTO DISCOVERY
-# =========================================================
-
-def find_silver_symbol():
-
-    try:
-
-        r = requests.get(
-            PRODUCTS_URL,
-            params={
-                "states": "live",
-                "page_size": 100
-            },
-            timeout=10
-        )
-
-        r.raise_for_status()
-
-        products = r.json().get(
-            "result",
-            []
-        )
-
-        candidates = []
-
-        for p in products:
-
-            text = " ".join(
-                str(
-                    p.get(k, "")
-                )
-                for k in [
-                    "symbol",
-                    "description",
-                    "underlying_asset",
-                    "contract_type",
-                    "product_type"
-                ]
-            ).upper()
-
-            if (
-                "XAG" in text
-                or
-                "SILVER" in text
-            ):
-                candidates.append(p)
-
-        # Prefer perpetual XAG
-        for p in candidates:
-
-            symbol = str(
-                p.get("symbol", "")
-            )
-
-            contract_type = str(
-                p.get(
-                    "contract_type",
-                    p.get(
-                        "product_type",
-                        ""
-                    )
-                )
-            ).lower()
-
-            if (
-                "XAG" in symbol.upper()
-                and
-                "perpetual" in contract_type
-            ):
-                return symbol
-
-        # Any XAG symbol
-        for p in candidates:
-
-            symbol = str(
-                p.get("symbol", "")
-            )
-
-            if "XAG" in symbol.upper():
-                return symbol
-
-    except Exception:
-        pass
-
-    return None
-
-
-# =========================================================
-# FINAL SIGNAL
-# =========================================================
-
-def signal(symbol):
-
-    # Higher timeframe conditions
-    h4_ok = check_4h(symbol)
-    h1_ok = check_1h(symbol)
-    m15_ok = check_15m(symbol)
-
-    # 5M
-    df = candles(
-        symbol,
-        "5m",
-        5 * 300
-    )
+def signal(asset, symbol):
 
     checks = {
-        "4H": "PASS" if h4_ok else "FAIL",
-        "1H": "PASS" if h1_ok else "FAIL",
-        "15M": "PASS" if m15_ok else "FAIL",
-        "5M": "WAIT"
+        "4H": "FAIL",
+        "1H": "FAIL",
+        "15M": "FAIL",
+        "5M": "FAIL",
     }
 
-    if df.empty:
+    current_price = None
 
-        checks["5M"] = "FAIL"
+    # -----------------------------------------------------
+    # 4H
+    # -----------------------------------------------------
 
-        return {
-            "signal": "WAIT",
-            "reason": "No 5M data",
-            "checks": checks
-        }
+    h4_ok = check_4h(symbol)
 
-    df = closed(df, 5)
+    checks["4H"] = (
+        "PASS"
+        if h4_ok
+        else "FAIL"
+    )
 
-    if len(df) < 210:
+    # -----------------------------------------------------
+    # 1H
+    # -----------------------------------------------------
 
-        checks["5M"] = "FAIL"
+    h1_ok = check_1h(symbol)
 
-        return {
-            "signal": "WAIT",
-            "reason": "Not enough 5M data",
-            "checks": checks
-        }
+    checks["1H"] = (
+        "PASS"
+        if h1_ok
+        else "FAIL"
+    )
 
-    df = add_emas(df)
+    # -----------------------------------------------------
+    # 15M
+    # -----------------------------------------------------
 
-    setup = five_minute_setup(df)
+    m15_ok = check_15m(symbol)
 
-    if setup:
+    checks["15M"] = (
+        "PASS"
+        if m15_ok
+        else "FAIL"
+    )
 
-        checks["5M"] = setup["signal"]
+    # -----------------------------------------------------
+    # 5M
+    # -----------------------------------------------------
 
-    else:
+    try:
 
-        checks["5M"] = "FAIL"
+        # Keep current/open candle so its close acts
+        # as the latest available live price.
+        raw_5m = candles(
+            symbol,
+            "5m",
+            5 * 300
+        )
 
-    # =====================================================
-    # COMPLETE SETUP
-    # =====================================================
+        if raw_5m.empty:
+            return {
+                "asset": asset,
+                "symbol": symbol,
+                "price": None,
+                "signal": "ERROR",
+                "checks": checks,
+                "reason": "No 5M data available",
+            }
 
-    if (
-        h4_ok
-        and
-        h1_ok
-        and
-        m15_ok
-        and
-        setup
-    ):
+        current_price = float(
+            raw_5m.iloc[-1]["close"]
+        )
 
-        setup["checks"] = checks
+        # Signal calculation only on CLOSED candles.
+        df = closed(
+            raw_5m,
+            5
+        )
 
-        return setup
+        if len(df) < 3:
 
-    # =====================================================
-    # WAIT REASON
-    # =====================================================
+            return {
+                "asset": asset,
+                "symbol": symbol,
+                "price": current_price,
+                "signal": "WAIT",
+                "checks": checks,
+                "reason": "Waiting for 5M candle data",
+            }
 
-    failed = []
+        setup = five_minute_setup(df)
 
-    if not h4_ok:
-        failed.append("4H")
+        if setup:
 
-    if not h1_ok:
-        failed.append("1H")
+            checks["5M"] = setup["signal"]
 
-    if not m15_ok:
-        failed.append("15M")
+        else:
 
-    if not setup:
-        failed.append("5M")
+            checks["5M"] = "FAIL"
 
-    return {
-        "signal": "WAIT",
-        "reason":
+        # -------------------------------------------------
+        # FINAL FILTER
+        # -------------------------------------------------
+
+        if (
+            h4_ok
+            and h1_ok
+            and m15_ok
+            and setup
+        ):
+
+            setup["asset"] = asset
+            setup["symbol"] = symbol
+            setup["price"] = current_price
+            setup["checks"] = checks
+
+            return setup
+
+        # Find exactly what is blocking the trade.
+        failed = []
+
+        if not h4_ok:
+            failed.append("4H")
+
+        if not h1_ok:
+            failed.append("1H")
+
+        if not m15_ok:
+            failed.append("15M")
+
+        if not setup:
+            failed.append("5M")
+
+        reason = (
             "Waiting: "
-            +
-            " + ".join(failed),
-        "checks": checks,
-        "time":
-            df.iloc[-1].name.isoformat()
-    }
+            + " + ".join(failed)
+        )
+
+        return {
+            "asset": asset,
+            "symbol": symbol,
+            "price": current_price,
+            "signal": "WAIT",
+            "checks": checks,
+            "reason": reason,
+            "time": (
+                df.iloc[-1].name.isoformat()
+            ),
+        }
+
+    except Exception as e:
+
+        return {
+            "asset": asset,
+            "symbol": symbol,
+            "price": current_price,
+            "signal": "ERROR",
+            "checks": checks,
+            "reason": str(e),
+        }
 
 
-# =========================================================
-# HOME PAGE
-# =========================================================
+# ---------------------------------------------------------
+# ROUTES
+# ---------------------------------------------------------
 
-@app.get("/")
+@app.route("/")
 def home():
-
     return render_template(
         "index.html"
     )
 
 
-# =========================================================
-# SCAN API
-# =========================================================
+@app.route("/api/scan")
+def api_scan():
 
-@app.get("/api/scan")
-def scan():
+    symbols = build_symbols()
 
-    # Main assets
-    assets = dict(SYMBOLS)
+    results = []
 
-    # Gold
-    gold = find_gold_symbol()
+    for asset in [
+        "BTC",
+        "ETH",
+        "SOL",
+        "GOLD",
+        "SILVER",
+    ]:
 
-    if gold:
-        assets["GOLD"] = gold
+        symbol = symbols.get(asset)
 
-    # Silver
-    silver = find_silver_symbol()
+        if not symbol:
 
-    if silver:
-        assets["SILVER"] = silver
+            results.append({
+                "asset": asset,
+                "symbol": "NOT_FOUND",
+                "price": None,
+                "signal": "UNAVAILABLE",
+                "checks": {
+                    "4H": "—",
+                    "1H": "—",
+                    "15M": "—",
+                    "5M": "—",
+                },
+                "reason": (
+                    f"{asset} product not found "
+                    "on Delta"
+                ),
+            })
 
-    output = {}
+            continue
 
-    # =====================================================
-    # SCAN EVERY ASSET
-    # =====================================================
+        results.append(
+            signal(
+                asset,
+                symbol
+            )
+        )
 
-    for name, symbol in assets.items():
-
-        try:
-
-            output[name] = signal(symbol)
-
-            output[name]["symbol"] = symbol
-
-        except Exception as e:
-
-            output[name] = {
-                "signal": "ERROR",
-                "reason": str(e),
-                "symbol": symbol
-            }
-
-    # =====================================================
-    # GOLD UNAVAILABLE
-    # =====================================================
-
-    if not gold:
-
-        output["GOLD"] = {
-            "signal": "UNAVAILABLE",
-            "reason":
-                "No live Gold/XAU product found",
-            "symbol":
-                "Auto-discovery"
-        }
-
-    # =====================================================
-    # SILVER UNAVAILABLE
-    # =====================================================
-
-    if not silver:
-
-        output["SILVER"] = {
-            "signal": "UNAVAILABLE",
-            "reason":
-                "No live Silver/XAG product found",
-            "symbol":
-                "Auto-discovery"
-        }
-
-    return jsonify({
+    response = jsonify({
+        "status": "ok",
         "updated": int(time.time()),
-        "assets": output
+        "assets": results,
     })
 
+    response.headers[
+        "Cache-Control"
+    ] = "no-store, no-cache, must-revalidate"
 
-# =========================================================
-# RUN APP
-# =========================================================
+    return response
+
 
 if __name__ == "__main__":
-
-    port = int(
-        os.environ.get(
-            "PORT",
-            "5000"
-        )
-    )
-
     app.run(
         host="0.0.0.0",
-        port=port
+        port=5000,
+        debug=False
     )
